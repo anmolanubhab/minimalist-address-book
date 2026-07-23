@@ -6,75 +6,70 @@ import StatsBar from "@/components/stats-bar";
 import ContactForm from "@/components/contact-form";
 import ContactList from "@/components/contact-list";
 import { Contact } from "@/types/contact";
-import { Toaster } from "sonner";
-
-const INITIAL_CONTACTS: Contact[] = [
-  {
-    id: "1",
-    name: "Sarah Connor",
-    phone: "(310) 555-0199",
-    createdAt: new Date().toISOString(),
-    isFavorite: true,
-  },
-  {
-    id: "2",
-    name: "Alex Mercer",
-    phone: "+1 (212) 555-0143",
-    createdAt: new Date(Date.now() - 3600000).toISOString(),
-    isFavorite: false,
-  },
-  {
-    id: "3",
-    name: "Marcus Aurelius",
-    phone: "07700 900077",
-    createdAt: new Date(Date.now() - 86400000).toISOString(),
-    isFavorite: true,
-  },
-];
+import { Toaster, toast } from "sonner";
+import { getContacts, createContact, deleteContact, toggleFavorite } from "@/lib/data";
 
 export default function Home() {
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
-    const stored = localStorage.getItem("quickbook_contacts");
-    if (stored) {
+    async function load() {
       try {
-        setContacts(JSON.parse(stored));
+        const data = await getContacts();
+        setContacts(data);
       } catch (e) {
-        setContacts(INITIAL_CONTACTS);
+        console.error("Failed to load contacts", e);
+        toast.error("Failed to load contacts from database");
+      } finally {
+        setIsLoaded(true);
       }
-    } else {
-      setContacts(INITIAL_CONTACTS);
     }
-    setIsLoaded(true);
+    load();
   }, []);
 
-  useEffect(() => {
-    if (isLoaded) {
-      localStorage.setItem("quickbook_contacts", JSON.stringify(contacts));
+  const handleAddContact = async (newContact: { name: string; phone: string }) => {
+    try {
+      const contact = await createContact(newContact.name, newContact.phone);
+      setContacts((prev) => [contact, ...prev]);
+    } catch (e) {
+      console.error(e);
+      toast.error("Failed to save contact to database");
     }
-  }, [contacts, isLoaded]);
-
-  const handleAddContact = (newContact: { name: string; phone: string }) => {
-    const contact: Contact = {
-      id: Date.now().toString(),
-      name: newContact.name,
-      phone: newContact.phone,
-      createdAt: new Date().toISOString(),
-      isFavorite: false,
-    };
-    setContacts((prev) => [contact, ...prev]);
   };
 
-  const handleDeleteContact = (id: string) => {
+  const handleDeleteContact = async (id: string) => {
+    const previous = [...contacts];
     setContacts((prev) => prev.filter((c) => c.id !== id));
+    try {
+      await deleteContact(id);
+    } catch (e) {
+      console.error(e);
+      setContacts(previous);
+      toast.error("Failed to delete contact from database");
+    }
   };
 
-  const handleToggleFavorite = (id: string) => {
+  const handleToggleFavorite = async (id: string) => {
+    const contact = contacts.find((c) => c.id === id);
+    if (!contact) return;
+    const nextFavorite = !contact.isFavorite;
+
+    // Optimistic update
     setContacts((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, isFavorite: !c.isFavorite } : c))
+      prev.map((c) => (c.id === id ? { ...c, isFavorite: nextFavorite } : c))
     );
+
+    try {
+      await toggleFavorite(id, nextFavorite);
+    } catch (e) {
+      console.error(e);
+      // Rollback
+      setContacts((prev) =>
+        prev.map((c) => (c.id === id ? { ...c, isFavorite: !nextFavorite } : c))
+      );
+      toast.error("Failed to update favorite status");
+    }
   };
 
   const recentCount = contacts.filter((c) => {
@@ -112,11 +107,17 @@ export default function Home() {
           <ContactForm onAddContact={handleAddContact} />
 
           <div className="border-t border-border/40 pt-6">
-            <ContactList
-              contacts={contacts}
-              onDelete={handleDeleteContact}
-              onToggleFavorite={handleToggleFavorite}
-            />
+            {isLoaded ? (
+              <ContactList
+                contacts={contacts}
+                onDelete={handleDeleteContact}
+                onToggleFavorite={handleToggleFavorite}
+              />
+            ) : ( 
+              <div className="flex items-center justify-center py-12">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+              </div>
+            )}
           </div>
         </div>
       </main>
